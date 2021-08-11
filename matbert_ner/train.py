@@ -3,6 +3,8 @@ import argparse
 import numpy as np
 from seqeval.scheme import IOB1, IOB2, IOBES
 from seqeval.metrics import classification_report
+import json
+from tqdm import tqdm
 
 def parse_args():
     '''
@@ -151,7 +153,6 @@ if __name__ == '__main__':
                             split_dict = {'train': split/100}
                         else:
                             split_dict = {'test': 0.1, 'valid': 0.00125*split, 'train': 0.01*split}
-                        # preprocess data and create dataloaders
                         ner_data.preprocess(data_files[dataset], split_dict, is_file=True, sentence_level=sentence_level, shuffle=True, seed=seed)
                         ner_data.create_dataloaders(batch_size=batch_size, shuffle=True, seed=seed)
                         if split == 100:
@@ -166,10 +167,16 @@ if __name__ == '__main__':
                         if os.path.exists(save_dir+'history.pt'):
                             print('Already trained {}'.format(alias))
                             history = torch.load(save_dir+'history.pt')
-                            print('{:<10}{:<10}{:10}'.format('epoch', 'training', 'validation'))
-                            for i in range(len(history['training'].keys())):
-                                metrics = {key: np.mean([batch['micro avg']['f1-score'] for batch in history[key]['epoch_{}'.format(i)]]) for key in ['training', 'validation']}
-                                print('{:<10d}{:<10.4f}{:<10.4f}'.format(i, metrics['training'], metrics['validation']))
+                            if split == 100:
+                                print('{:<10}{:<10}'.format('epoch', 'training'))
+                                for i in range(len(history['training'].keys())):
+                                    metrics = {key: np.mean([batch['micro avg']['f1-score'] for batch in history[key]['epoch_{}'.format(i)]]) for key in ['training']}
+                                    print('{:<10d}{:<10.4f}'.format(i, metrics['training']))
+                            else:
+                                print('{:<10}{:<10}{:10}'.format('epoch', 'training', 'validation'))
+                                for i in range(len(history['training'].keys())):
+                                    metrics = {key: np.mean([batch['micro avg']['f1-score'] for batch in history[key]['epoch_{}'.format(i)]]) for key in ['training', 'validation']}
+                                    print('{:<10d}{:<10.4f}{:<10.4f}'.format(i, metrics['training'], metrics['validation']))
                         else:
                             try:
                                 # create directory if it doesn't exist
