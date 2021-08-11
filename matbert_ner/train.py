@@ -128,7 +128,11 @@ if __name__ == '__main__':
                   'aunp2': 'data/aunp_2lab.json',
                   'aunp5': 'data/aunp_5lab.json',
                   'aunp6': 'data/aunp_6lab.json',
-                  'aunp11': 'data/aunp_11lab.json'}
+                  'aunp11': 'data/aunp_11lab.json',
+                  'doping2': 'data/doping2.jsonl'
+                  }
+
+
     # model file dictionary
     model_files = {'bert': 'bert-base-uncased',
                    'scibert': 'allenai/scibert_scivocab_uncased',
