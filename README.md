@@ -8,7 +8,10 @@ A framework for materials science NER using the HuggingFace Transformers NLP Too
 git clone https://github.com/walkernr/MatBERT_NER.git MatBERT_NER
 cd MatBERT_NER
 pip install -r requirements.txt .
+
 ```
+
+Download the model weights [here](https://figshare.com/articles/software/MatBERT-NER_models/15087276)
 
 # Example Usage
 
