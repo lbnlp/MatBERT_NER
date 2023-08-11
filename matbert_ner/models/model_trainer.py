@@ -7,6 +7,18 @@ from transformers import AdamW
 from torchtools.optim import RangerLars, Ralamb, Ranger, Novograd, RAdam, Lamb, Lookahead
 from seqeval.scheme import IOB1, IOB2, IOBES
 from seqeval.metrics import accuracy_score, classification_report
+import json
+
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NpEncoder, self).default(obj)
 
 
 class StateCacher(object):
@@ -177,7 +189,8 @@ class NERTrainer(object):
                 None
         '''
         # save epoch metrics
-        torch.save(self.epoch_metrics, history_path)
+        with open(history_path, 'w') as f:
+            f.write(json.dumps(self.epoch_metrics, indent=2, cls=NpEncoder))
     
 
     def load_history(self, history_path):
@@ -189,7 +202,8 @@ class NERTrainer(object):
                 None
         '''
         # load epoch metrics from path
-        self.epoch_metrics = torch.load(history_path)
+        with open(history_path, 'r') as f:
+            self.epoch_metrics = json.load(f)
         # set past epochs
         self.past_epoch = len(self.epoch_metrics['training'].keys())
 
@@ -441,7 +455,7 @@ class NERTrainer(object):
                             # append joined entity to dictionary
                             entry_entities[sentence[entity_idx[k]]['annotation']].add(' '.join([sentence[u]['text'] for u in range(entity_idx[k], entity_idx[k+1])]))
             # append entry entity dictionary
-            annotation['entities'] = {class_type: list(entry_entities[class_type]) for class_type in class_types}
+            annotation['entities'] = {class_type: sorted(list(set(entry_entities[class_type]))) for class_type in class_types}
         return annotations
     
 
@@ -712,7 +726,8 @@ class NERTrainer(object):
         metrics, test_results = self.train_evaluate_epoch(0, 1, test_iter, 'test')
         # save the test metrics and results
         if test_path is not None:
-            torch.save((metrics, test_results), test_path)
+            with open(test_path, 'w') as f:
+                f.write(json.dumps({'metrics': metrics, 'results': test_results}, indent=2, cls=NpEncoder))
         # return the test metrics and results
         return metrics, test_results
     
@@ -739,15 +754,18 @@ class NERTrainer(object):
         return merged_prediction_results
     
 
-    def predict(self, predict_iter, original_data=None, predict_path=None, state_path=None):
+    def predict(self, predict_iter, original_data=None, state_path=None, predict_path=None, return_full_dict=False):
         '''
         Predicts classifications for a dataset
             Arguments:
                 predict_iter: Prediction dataloader
-                predict_path: Path to save the predictions to
+                original_data: Original data before pre-processing
                 state_path: Path to load the model state from
+                predict_path: Path to save the predictions to
+                return_full_dict: Toggle for returning full JSON entries or only the detected entities
             Returns:
                 Dictionary of text and annotations by word, sentence, paragraph e.g. [[[{'text': text, 'annotation': annotation},...],...],...]
+                  or dictionary of entity summaries
         '''
         # if state path provided, load state (excluding optimizer)
         if state_path is not None:
@@ -758,18 +776,27 @@ class NERTrainer(object):
         prediction_results = self.merge_split_entries(prediction_results)
         annotations = self.process_ids(prediction_results['ids'], prediction_results['input_ids'], prediction_results['attention_mask'],
                                        prediction_results['valid_mask'], prediction_results['prediction_ids'])
-        annotation_dict = {}
-        for annotation in annotations:
-            annotation_dict[annotation['id']] = {'tokens': annotation['tokens']}
         if original_data is not None:
+            output_annotations = []
+            annotation_dict = {}
+            for annotation in annotations:
+                annotation_dict[annotation['id']] = {'tokens': annotation['tokens']}
             for original in original_data:
                 annotation = annotation_dict[original['id']]
-                for annotated_sentence, original_sentence in zip(annotation['tokens'], original['tokens']):
-                    for token, text in zip(annotated_sentence, original_sentence['text']):
-                        token['text'] = text
-        annotations = self.process_summaries(annotations)
+                output_annotation = {'id': original['id'], 'meta': original['meta'], 'tokens': annotation['tokens']}
+                for original_sentence, output_annotation_sentence  in zip(original['tokens'], output_annotation['tokens']):
+                    for original_token, output_annotation_token in zip(original_sentence['text'], output_annotation_sentence):
+                        output_annotation_token['text'] = original_token
+                output_annotations.append(output_annotation)
+        else:
+            output_annotations = annotations
+        annotations = self.process_summaries(output_annotations)
         # save annotations
         if predict_path is not None:
-            torch.save(annotations, predict_path)
+            with open(predict_path, 'w') as f:
+                f.write(json.dumps(annotations, indent=2))
         # return the annotations
-        return annotations
+        if return_full_dict:
+            return annotations
+        else:
+            return [annotation['entities'] for annotation in annotations]

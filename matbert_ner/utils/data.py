@@ -75,23 +75,51 @@ class NERData():
         identifiers = []
         # list of raw data (json entries)
         data_filt = []
-        for entry in tqdm(data, desc='| filtering entries |'):
+        for i, entry in enumerate(tqdm(data, desc='| filtering entries |')):
             try:
-                identifier = entry['meta']['doi']+'/'+str(entry['meta']['par'])+'/'+str(entry['meta']['split'])
+                identifier = '{}/{}/{}'.format(entry['meta']['doi'], str(entry['meta']['par']), str(entry['meta']['split']))
+                d = {'meta': entry['meta']}
             except:
                 try:
-                    identifier = entry['meta']['doi']+'/'+str(entry['meta']['par'])
+                    identifier = '{}/{}'.format(entry['meta']['doi'], str(entry['meta']['par']))
+                    d = {'meta': {'doi': entry['meta']['doi'], 'par': entry['meta']['par'], 'split': 0}}
                 except:
                     try:
                         identifier = entry['doi']
+                        d = {'meta': {'doi': entry['doi'], 'par': 0, 'split': 0}}
                     except:
-                        identifier = entry['text']
+                        try:
+                            identifier = entry['text']
+                            d = {'meta': {'doi': i, 'par': 0, 'split': 0}}
+                        except:
+                            # print('Value Error: Invalid Input Entry Format For Unique Identifier (Key(s) Missing)'+
+                            #       '\nSupported Formats:'+
+                            #       '\n  \{[meta][doi\}+\{[meta][par]\}+\{[meta][split]\}'+
+                            #       '\n  \{[meta][doi\}+\{[meta][par]\}'+
+                            #       '\n  \{[doi]\}'+
+                            #       '\n  \{[text]\}')
+                            identifier = i
+                            d = {'meta': {'doi': i, 'par': 0, 'split': 0}}
+            try:
+                d['tokens'] = entry['tokens']
+            except:
+                try:
+                    d['sents'] = entry['sents']
+                except:
+                    try:
+                        d['text'] = entry['text']
+                    except:
+                        d['text'] = entry
+            try:
+                d['labels'] = entry['labels']
+            except:
+                pass
             # only entries with unique identifiers are retrieved
             if identifier in identifiers:
                 pass
             else:
                 identifiers.append(identifier)
-                data_filt.append(entry)
+                data_filt.append(d)
         return identifiers, data_filt
 
     
@@ -111,7 +139,7 @@ class NERData():
         _, data_filt = self.filter_data(data)
         id = 0
         for entry in tqdm(data_filt, desc='| loading annotated entries |'):
-            d = {'id': id, 'tokens': entry['tokens']}
+            d = {'id': id, 'meta': entry['meta'], 'tokens': entry['tokens']}
             data_raw.append(d)
             # add labels in entry to raw label set
             for l in entry['labels']:
@@ -136,7 +164,7 @@ class NERData():
         _, data_filt = self.filter_data(data)
         id = 0
         for entry in tqdm(data_filt, desc='| pre-tokenizing unannotated entries |'):
-            d = {'id': id, 'tokens': []}
+            d = {'id': id, 'meta': entry['meta'], 'tokens': []}
             try:
                 sents = entry['tokens']
             except:
@@ -175,13 +203,13 @@ class NERData():
         # open data file
         try:
             with open(data_file, 'r') as f:
-                content = f.read()
-                entries = json.loads(content)
-        except:
-            with open(data_file, 'r') as f:
                 entries = []
                 for l in tqdm(f, desc='| loading entries from file |'):
                     entries.append(json.loads(l))
+        except:
+            with open(data_file, 'r') as f:
+                content = f.read()
+                entries = json.loads(content)
         data_raw = self.load_from_memory(entries, annotated)
         return data_raw
 
@@ -251,7 +279,7 @@ class NERData():
             # for entry in split
             for d in data_split[split]:
                 # represent entry as list of dictionaries (sentences) with text and annotation keys for lists of the corresponding token properties
-                data_formatted[split].append({'id': d['id'], 'tokens': [{key: [token[key] for token in sentence] for key in ['text', 'annotation']} for sentence in d['tokens']]})
+                data_formatted[split].append({'id': d['id'], 'meta': d['meta'], 'tokens': [{key: [token[key] for token in sentence] for key in ['text', 'annotation']} for sentence in d['tokens']]})
         return data_formatted
 
 
@@ -270,7 +298,7 @@ class NERData():
             # for entry in split (paragraph)
             for dat in data_formatted[split]:
                 # initialize empty list
-                d = {'id': dat['id'], 'tokens': []}
+                d = {'id': dat['id'], 'meta': dat['meta'], 'tokens': []}
                 # for sentence in entry
                 for sent in dat['tokens']:
                     # initialize text/label dictionary for sentence
@@ -373,13 +401,13 @@ class NERData():
 
     
     def insert_cls(self, d):
-            # dictionary of classes (given class name, return index)
-            d['tokens'].insert(0, self.cls_dict['text'])
-            d['labels'].insert(0, self.cls_dict['label'])
-            d['token_ids'].insert(0, self.tokenizer.convert_tokens_to_ids(self.cls_dict['text']))
-            d['label_ids'].insert(0, self.class_dict[self.cls_dict['label']])
-            d['attention_mask'].insert(0, 1)
-            d['valid_mask'].insert(0, 1)
+        # dictionary of classes (given class name, return index)
+        d['tokens'].insert(0, self.cls_dict['text'])
+        d['labels'].insert(0, self.cls_dict['label'])
+        d['token_ids'].insert(0, self.tokenizer.convert_tokens_to_ids(self.cls_dict['text']))
+        d['label_ids'].insert(0, self.class_dict[self.cls_dict['label']])
+        d['attention_mask'].insert(0, 1)
+        d['valid_mask'].insert(0, 1)
 
 
     def create_features(self, data_labeled):
@@ -521,14 +549,36 @@ class NERData():
                 else:
                     slen = [len(s) for s in dat['tokens']]
                     tnum = sum(slen)
-                    n_splits = int(np.ceil((self.token_limit-np.sqrt(self.token_limit**2-4*tnum))/2))
+                    n_splits= int(np.ceil((self.token_limit-np.sqrt(self.token_limit**2-4*tnum))/2))
+                    n_shave = 0
                     if n_splits > 1:
-                        bounds = partition(slen, n_splits)
-                        for i in range(n_splits):
-                            d = {'id': dat['id'], 'pt': i}
-                            d.update({key: [v for s in dat[key][bounds[i][0]:bounds[i][1]] for v in s] for key in ['tokens', 'labels', 'token_ids', 'label_ids', 'attention_mask', 'valid_mask']})
-                            self.insert_cls(d)
-                            dat_split_feature[split].append(d)
+                        valid = False
+                        while not valid:
+                            bounds = partition(slen, n_splits)
+                            ds = []
+                            ml= 0
+                            for i in range(len(bounds)):
+                                d = {'id': dat['id'], 'pt': i}
+                                d.update({key: [v for s in dat[key][bounds[i][0]:bounds[i][1]] for v in s] for key in ['tokens', 'labels', 'token_ids', 'label_ids', 'attention_mask', 'valid_mask']})
+                                self.insert_cls(d)
+                                ds.append(d)
+                                if len(d['tokens']) > ml:
+                                    ml = len(d['tokens'])
+                            if ml > self.token_limit:
+                                n_splits += 1
+                                if n_splits > len(dat['tokens']):
+                                    n_shave += 1
+                                    if n_shave == len(slen):
+                                        valid = True
+                                        print('failed to split paragraph on sentence breaks into subparagraphs below the token limit, skipping')
+                                    else:
+                                        d.update({key: [v for s in dat[key][:-n_shave] for v in s] for key in ['tokens', 'labels', 'token_ids', 'label_ids', 'attention_mask', 'valid_mask']})
+                                        slen = [len(s) for s in d['tokens']]
+                                        tnum = sum(slen)
+                                        n_splits = int(np.ceil((self.token_limit-np.sqrt(self.token_limit**2-4*tnum))/2))
+                            else:
+                                valid = True
+                                dat_split_feature[split].extend(ds)
                     else:
                         d = {'id': dat['id'], 'pt': 0}
                         d.update({key: [v for s in dat[key] for v in s] for key in ['tokens', 'labels', 'token_ids', 'label_ids', 'attention_mask', 'valid_mask']})
